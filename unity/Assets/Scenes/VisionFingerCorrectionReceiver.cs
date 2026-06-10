@@ -16,6 +16,7 @@ public class VisionFingerCorrectionReceiver : MonoBehaviour
 
     [Header("Anchor validation")]
     [Range(0f, 1f)] public float minConfidence = 0.70f;
+    [Range(0f, 1f)] public float visualConfidenceThreshold = 0.75f;
     public int minStableMs = 0;
     public float commandCooldownSeconds = 0.05f;
     public float visionTimeoutSeconds = 0.6f;
@@ -86,6 +87,7 @@ public class VisionFingerCorrectionReceiver : MonoBehaviour
         public string command;
         public string gestureState;
         public float score;
+        public float vis_conf;
         public bool isPalmFacing;
     }
 
@@ -177,15 +179,30 @@ public class VisionFingerCorrectionReceiver : MonoBehaviour
 
         string command = GetCommand(packet);
         int packetFingerIndex = GetFingerIndex(packet);
+        float visualConfidence = GetVisionConfidence(packet);
         if (command != CommandIdle || logIdlePackets)
         {
             WriteDiagnostic(
                 "PARSE_OK",
-                $"seq={packet.sequenceId} command={command} finger={packetFingerIndex} score={packet.score:F3} conf={packet.confidence:F3} stableMs={packet.stableMs} palmFacing={packet.isPalmFacing}");
+                $"seq={packet.sequenceId} command={command} finger={packetFingerIndex} score={packet.score:F3} conf={packet.confidence:F3} vis_conf={visualConfidence:F3} stableMs={packet.stableMs} palmFacing={packet.isPalmFacing}");
         }
         if (printPacketDiagnostics && command != CommandIdle)
         {
-            Debug.Log($"Vision packet seq={packet.sequenceId} command={command} finger={packetFingerIndex} score={packet.score:F2} conf={packet.confidence:F2} palmFacing={packet.isPalmFacing}");
+            Debug.Log($"Vision packet seq={packet.sequenceId} command={command} finger={packetFingerIndex} score={packet.score:F2} conf={packet.confidence:F2} vis_conf={visualConfidence:F2} palmFacing={packet.isPalmFacing}");
+        }
+
+        if (visualConfidence < visualConfidenceThreshold)
+        {
+            WriteDiagnostic(
+                "REJECT_BY_CONFIDENCE",
+                $"seq={packet.sequenceId} command={command} finger={packetFingerIndex} vis_conf={visualConfidence:F3}<threshold:{visualConfidenceThreshold:F3}");
+            if (IsFingerHoldActive(packetFingerIndex))
+            {
+                WriteDiagnostic(
+                    "LOW_CONF_IGNORED_BY_HOLD",
+                    $"seq={packet.sequenceId} finger={packetFingerIndex} activeCommand={activeFingerCommands[packetFingerIndex]} holdRemaining={fingerHoldEndTimes[packetFingerIndex] - Time.time:F3}");
+            }
+            return;
         }
 
         if (command == CommandIdle)
@@ -418,6 +435,12 @@ public class VisionFingerCorrectionReceiver : MonoBehaviour
     {
         if (!string.IsNullOrEmpty(packet.command)) return packet.command;
         return packet.gestureState;
+    }
+
+    private float GetVisionConfidence(VisionPacket packet)
+    {
+        if (packet == null) return 0f;
+        return packet.vis_conf > 0f ? packet.vis_conf : packet.confidence;
     }
 
     private void StartReceiver()

@@ -1342,6 +1342,7 @@ MonoBehaviour:
   enableVisionCorrection: 1
   listenPort: 5055
   minConfidence: 0.7
+  visualConfidenceThreshold: 0.75
   minStableMs: 0
   commandCooldownSeconds: 0.05
   visionTimeoutSeconds: 0.6

@@ -14,6 +14,7 @@ UNITY_IP = "127.0.0.1"
 UNITY_PORT = 5055
 
 MIN_HAND_CONFIDENCE = 0.70
+VIS_CONFIDENCE_THRESHOLD = 0.75
 CALIBRATION_REPETITIONS = 10
 STAGE_SECONDS = 20.0
 STABLE_WINDOW_MS = 0
@@ -263,7 +264,7 @@ def command_for_state(state):
     return "IDLE"
 
 
-def send_finger_packet(sock, finger_name, state, confidence, stable_ms, score, ranges, sequence_id):
+def send_finger_packet(sock, finger_name, state, confidence, stable_ms, score, ranges, sequence_id, vis_conf):
     finger = FINGERS[finger_name]
     command = command_for_state(state)
     payload = {
@@ -274,6 +275,7 @@ def send_finger_packet(sock, finger_name, state, confidence, stable_ms, score, r
         "fingerName": finger_name,
         "fingerIndex": finger["index"],
         "confidence": float(confidence),
+        "vis_conf": float(vis_conf),
         "stableMs": int(stable_ms),
         "score": float(score),
         "range": ranges[finger_name],
@@ -284,7 +286,7 @@ def send_finger_packet(sock, finger_name, state, confidence, stable_ms, score, r
         print(f"PY_SEND seq={sequence_id} finger={finger_name} state={state} score={score:.2f} conf={confidence:.2f}")
 
 
-def send_hand_packet(sock, command, confidence, scores, sequence_id, is_palm_facing):
+def send_hand_packet(sock, command, confidence, scores, sequence_id, is_palm_facing, vis_conf):
     payload = {
         "timestampMs": int(time.monotonic() * 1000),
         "sequenceId": sequence_id,
@@ -293,6 +295,7 @@ def send_hand_packet(sock, command, confidence, scores, sequence_id, is_palm_fac
         "fingerIndex": -1,
         "fingerName": "All",
         "confidence": float(confidence),
+        "vis_conf": float(vis_conf),
         "stableMs": 0,
         "score": float(sum(scores.values()) / max(1, len(scores))),
         "isPalmFacing": bool(is_palm_facing),
@@ -381,6 +384,7 @@ def main():
 
     print(f"MediaPipe per-finger anchor sender -> Unity UDP {UNITY_IP}:{UNITY_PORT}")
     print(f"Calibration: each finger gets its own stage. Move only that finger open-close {CALIBRATION_REPETITIONS} times.")
+    print(f"Visual confidence gate: Unity should reject correction packets below {VIS_CONFIDENCE_THRESHOLD:.2f}.")
     print(f"Calibration database: {CALIBRATION_DB_PATH}")
 
     with hand_landmarker.create_from_options(options) as landmarker:
@@ -469,12 +473,12 @@ def main():
 
                         if should_send:
                             sequence_id += 1
-                            send_finger_packet(sock, name, command_state, confidence, stable_ms, score, ranges, sequence_id)
+                            send_finger_packet(sock, name, command_state, confidence, stable_ms, score, ranges, sequence_id, hand_conf)
                             last_sent_ms[name] = now_ms
-                            print(f"Sent {name} {command_state}: confidence={confidence:.2f}, stable={stable_ms}ms, score={score:.2f}, facing={orientation}")
+                            print(f"Sent {name} {command_state}: confidence={confidence:.2f}, vis_conf={hand_conf:.2f}, stable={stable_ms}ms, score={score:.2f}, facing={orientation}")
                         elif command_state == "IDLE" and now_ms - last_idle_sent_ms[name] >= IDLE_SEND_INTERVAL_MS:
                             sequence_id += 1
-                            send_finger_packet(sock, name, "IDLE", 1.0, stable_ms, score, ranges, sequence_id)
+                            send_finger_packet(sock, name, "IDLE", 1.0, stable_ms, score, ranges, sequence_id, hand_conf)
                             last_idle_sent_ms[name] = now_ms
 
                     hand_command = "IDLE"
@@ -489,7 +493,7 @@ def main():
                         and (hand_command != last_hand_command or now_ms - last_hand_sent_ms >= HAND_SEND_COOLDOWN_MS)
                     ):
                         sequence_id += 1
-                        send_hand_packet(sock, hand_command, hand_conf, finger_scores, sequence_id, palm_facing)
+                        send_hand_packet(sock, hand_command, hand_conf, finger_scores, sequence_id, palm_facing, hand_conf)
                         last_hand_command = hand_command
                         last_hand_sent_ms = now_ms
                     elif hand_command == "IDLE":
